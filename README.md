@@ -23,3 +23,18 @@ This upgraded Streamlit package is a professional multi-well exploration dashboa
 ## Run
 pip install -r requirements.txt
 streamlit run app.py
+
+
+## Troubleshooting
+
+If Streamlit Cloud shows a file-read error:
+- Make sure the raw data files are committed to the repository and not only uploaded locally.
+- Put them inside a `data/` folder next to `app.py`.
+- Expected filenames:
+  - `Haraz-1_SLAM.csv`
+  - `HARAZ-2_SLAM.las`
+  - `Haraz-3_SLAM.csv`
+  - `Haraz-4_SLAM.csv`
+  - `Haraz-5_SLAM.csv`
+
+This version of the app will now skip missing files safely and show a clear warning instead of crashing.

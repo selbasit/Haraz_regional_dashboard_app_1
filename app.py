@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 import math
 import re
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Iterable
 
 import folium
 import numpy as np
@@ -27,6 +27,42 @@ WELL_FILES = {
     "Haraz-4": DATA_DIR / "Haraz-4_SLAM.csv",
     "Haraz-5": DATA_DIR / "Haraz-5_SLAM.csv",
 }
+
+def candidate_paths_for(path: Path) -> List[Path]:
+    names = [path.name, path.name.lower(), path.name.upper()]
+    base_dirs = [
+        DATA_DIR,
+        Path(__file__).parent,
+        Path.cwd(),
+        Path.cwd() / "data",
+    ]
+    out: List[Path] = []
+    for base in base_dirs:
+        for name in names:
+            cand = base / name
+            if cand not in out:
+                out.append(cand)
+    return out
+
+def resolve_existing_path(path: Path) -> Optional[Path]:
+    for cand in candidate_paths_for(path):
+        if cand.exists() and cand.is_file():
+            return cand
+    return None
+
+def read_text(path: Path) -> str:
+    real_path = resolve_existing_path(path) or path
+    if not real_path.exists() or not real_path.is_file():
+        raise FileNotFoundError(f"Data file not found: {path.name}")
+    encodings = ["utf-8", "latin-1", "cp1252"]
+    for enc in encodings:
+        try:
+            return real_path.read_text(encoding=enc, errors="ignore")
+        except OSError:
+            continue
+    with open(real_path, "rb") as f:
+        return f.read().decode("utf-8", errors="ignore")
+
 
 LITH_COLORS = {
     "Clean Sand": "#E9C46A",
@@ -79,8 +115,6 @@ def dms_to_decimal(text: str) -> Optional[float]:
     return value
 
 
-def read_text(path: Path) -> str:
-    return path.read_text(errors="ignore", encoding="utf-8")
 
 
 def parse_las_like(path: Path) -> Tuple[pd.DataFrame, Dict[str, str]]:
@@ -294,14 +328,21 @@ def load_all_wells() -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
     rows = []
 
     for well_name, path in WELL_FILES.items():
-        text_head = read_text(path)[:200].lstrip()
-        if path.suffix.lower() == ".las" or text_head.startswith("~"):
-            df, meta = parse_las_like(path)
-        else:
-            df, meta = parse_csv_log(path)
+        real_path = resolve_existing_path(path)
+        if real_path is None:
+            continue
+
+        try:
+            text_head = read_text(real_path)[:200].lstrip()
+            if real_path.suffix.lower() == ".las" or text_head.startswith("~"):
+                df, meta = parse_las_like(real_path)
+            else:
+                df, meta = parse_csv_log(real_path)
+        except Exception:
+            continue
 
         df = standardize_columns(df)
-        if "DEPTH" not in df.columns:
+        if "DEPTH" not in df.columns or df.empty:
             continue
 
         df = add_derived_features(df)
@@ -577,12 +618,20 @@ def add_header():
 def main():
     add_header()
     wells, summary_df = load_all_wells()
+    if not wells:
+        st.error("No valid well-log files were found. Make sure the data files are committed inside the app repository, preferably under a `data/` folder next to `app.py`.")
+        st.info("Expected file names: Haraz-1_SLAM.csv, HARAZ-2_SLAM.las, Haraz-3_SLAM.csv, Haraz-4_SLAM.csv, Haraz-5_SLAM.csv")
+        st.code("repo_root/\n  app.py\n  data/\n    Haraz-1_SLAM.csv\n    HARAZ-2_SLAM.las\n    Haraz-3_SLAM.csv\n    Haraz-4_SLAM.csv\n    Haraz-5_SLAM.csv")
+        st.stop()
     all_df = pd.concat(wells.values(), ignore_index=True)
     pay_df = pay_summary_by_well_and_formation(all_df)
     rank_df = ranking_table(pay_df)
     top_df = tops_table(all_df)
 
     st.caption("Using the uploaded Haraz wells as the working regional dataset template for the requested Hamra-style dashboard. Coordinates for non-LAS wells are relative placeholders and can be replaced with surveyed field positions.")
+    missing = [name for name, path in WELL_FILES.items() if resolve_existing_path(path) is None]
+    if missing:
+        st.warning("Some expected data files were not found and were skipped: " + ", ".join(missing))
 
     with st.sidebar:
         st.header("Dashboard Controls")
